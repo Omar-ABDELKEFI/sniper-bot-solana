@@ -155,17 +155,17 @@ const handleSlotChange = (args: SlotChangeInput) => async (_: SlotInfo) => {
   }
 };
 
-(async () => {
+// (async () => {
 
-  const walletKeyPairFile = (process.env.PRIVATE_KEY!)
-  const walletKeyPair = Keypair.fromSecretKey(bs58.decode(walletKeyPairFile));
+//   const walletKeyPairFile = (process.env.PRIVATE_KEY!)
+//   const walletKeyPair = Keypair.fromSecretKey(bs58.decode(walletKeyPairFile));
 
-  const connection = new Connection(process.env.RPC_ENDPOINT ?? clusterApiUrl('devnet'), 'finalized');
+//   const connection = new Connection(process.env.RPC_ENDPOINT ?? clusterApiUrl('devnet'), 'finalized');
 
-  connection.onSlotChange(
-    handleSlotChange({ connection, walletKeyPair, destinationAddress: new PublicKey("FfezEFxGizgRqp2rFh3HRjXDSkaZqLvTVDH9iSWCj1cY") }),
-  );
-})();
+//   connection.onSlotChange(
+//     handleSlotChange({ connection, walletKeyPair, destinationAddress: new PublicKey("FfezEFxGizgRqp2rFh3HRjXDSkaZqLvTVDH9iSWCj1cY") }),
+//   );
+// })();
 
 
 export const retrieveTokenValueByAddress = async (tokenAddress: string) => {

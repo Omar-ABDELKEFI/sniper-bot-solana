@@ -8,7 +8,9 @@ import {
   MarketStateV3,
   Token,
   TokenAmount,
+  Currency
 } from '@raydium-io/raydium-sdk';
+import BN from "bn.js";
 import {
   AccountLayout,
   createAssociatedTokenAccountIdempotentInstruction,
@@ -109,62 +111,50 @@ async function init(): Promise<void> {
   const PRIVATE_KEY = retrieveEnvVariable('PRIVATE_KEY', logger);
   wallet = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
   logger.info(`Wallet Address: ${wallet.publicKey}`);
-
-  // get quote mint and amount
+  
   const QUOTE_MINT = retrieveEnvVariable('QUOTE_MINT', logger);
   const QUOTE_AMOUNT = retrieveEnvVariable('QUOTE_AMOUNT', logger);
-  switch (QUOTE_MINT) {
-    case 'WSOL': {
-      quoteToken = Token.WSOL;
-      quoteAmount = new TokenAmount(Token.WSOL, QUOTE_AMOUNT, false);
-      quoteMinPoolSizeAmount = new TokenAmount(quoteToken, MIN_POOL_SIZE, false);
-      break;
+    switch (QUOTE_MINT) {
+      case 'WSOL': {
+        quoteToken = Token.WSOL;
+        quoteAmount = new TokenAmount(Token.WSOL, QUOTE_AMOUNT, false);
+        quoteMinPoolSizeAmount = new TokenAmount(quoteToken, MIN_POOL_SIZE, false);
+        break;
+      }
+      default: {
+        throw new Error(`Unsupported quote mint "${QUOTE_MINT}". Supported values are USDC and WSOL`);
+      }
     }
-    case 'USDC': {
-      quoteToken = new Token(
-        TOKEN_PROGRAM_ID,
-        new PublicKey('FfezEFxGizgRqp2rFh3HRjXDSkaZqLvTVDH9iSWCj1cY'),
-        6,
-        'USDC',
-        'USDC',
-      );
-      quoteAmount = new TokenAmount(quoteToken, QUOTE_AMOUNT, false);
-      break;
+  
+    logger.info(`Snipe list: ${USE_SNIPE_LIST}`);
+    logger.info(`Check mint renounced: ${CHECK_IF_MINT_IS_RENOUNCED}`);
+    logger.info(
+      `Min pool size: ${quoteMinPoolSizeAmount.isZero() ? 'false' : quoteMinPoolSizeAmount.toFixed()} ${quoteToken.symbol}`,
+    );
+    logger.info(`Buy amount: ${quoteAmount.toFixed()} ${quoteToken.symbol}`);
+    logger.info(`Auto sell: ${AUTO_SELL}`);
+  
+    // check existing wallet for associated token account of quote mint
+    const tokenAccounts = await getTokenAccounts(solanaConnection, wallet.publicKey, commitment);
+  
+    for (const ta of tokenAccounts) {
+      existingTokenAccounts.set(ta.accountInfo.mint.toString(), <MinimalTokenAccountData>{
+        mint: ta.accountInfo.mint,
+        address: ta.pubkey,
+      });
     }
-    default: {
-      throw new Error(`Unsupported quote mint "${QUOTE_MINT}". Supported values are USDC and WSOL`);
+  
+    const tokenAccount = tokenAccounts.find((acc) => acc.accountInfo.mint.toString() === quoteToken.mint.toString())!;
+  
+    if (!tokenAccount) {
+      throw new Error(`No ${quoteToken.symbol} token account found in wallet: ${wallet.publicKey}`);
     }
+  
+    quoteTokenAssociatedAddress = tokenAccount.pubkey;
+  
+    // load tokens to snipe
+    loadSnipeList();
   }
-
-  logger.info(`Snipe list: ${USE_SNIPE_LIST}`);
-  logger.info(`Check mint renounced: ${CHECK_IF_MINT_IS_RENOUNCED}`);
-  logger.info(
-    `Min pool size: ${quoteMinPoolSizeAmount.isZero() ? 'false' : quoteMinPoolSizeAmount.toFixed()} ${quoteToken.symbol}`,
-  );
-  logger.info(`Buy amount: ${quoteAmount.toFixed()} ${quoteToken.symbol}`);
-  logger.info(`Auto sell: ${AUTO_SELL}`);
-
-  // check existing wallet for associated token account of quote mint
-  const tokenAccounts = await getTokenAccounts(solanaConnection, wallet.publicKey, commitment);
-
-  for (const ta of tokenAccounts) {
-    existingTokenAccounts.set(ta.accountInfo.mint.toString(), <MinimalTokenAccountData>{
-      mint: ta.accountInfo.mint,
-      address: ta.pubkey,
-    });
-  }
-
-  const tokenAccount = tokenAccounts.find((acc) => acc.accountInfo.mint.toString() === quoteToken.mint.toString())!;
-
-  if (!tokenAccount) {
-    throw new Error(`No ${quoteToken.symbol} token account found in wallet: ${wallet.publicKey}`);
-  }
-
-  quoteTokenAssociatedAddress = tokenAccount.pubkey;
-
-  // load tokens to snipe
-  loadSnipeList();
-}
 
 function saveTokenAccount(mint: PublicKey, accountData: MinimalMarketLayoutV3) {
   const ata = getAssociatedTokenAddressSync(mint, wallet.publicKey);
@@ -194,6 +184,16 @@ export async function processRaydiumPool(id: PublicKey, poolState: LiquidityStat
       return;
     }
   }
+  const isFreezable = await checkFreezable(poolState.baseMint);
+  if (isFreezable) {
+    logger.info({ mint: poolState.baseMint }, 'Skipping, mint is freezable');
+    return;
+  }
+ 
+  const denominator = new BN(10).pow(poolState.baseDecimal);
+console.log(id,"ididid-id")
+console.log(Number(poolState.lpReserve.div(denominator).toString()),"fffffff")
+console.log(id,"111-11")
 
   await buy(id, poolState);
 }
@@ -433,7 +433,21 @@ async function sell(accountId: PublicKey, mint: PublicKey, amount: BigNumberish,
 
 //   return (bestAsk + bestBid) / 2;
 // }
-
+export async function checkFreezable(mint: PublicKey): Promise<boolean> {
+  try {
+    const mintAccountInfo = await solanaConnection.getAccountInfo(mint);
+    if (!mintAccountInfo || !mintAccountInfo.data) {
+      return false;
+    }
+    
+    const mintData = MintLayout.decode(mintAccountInfo.data);
+    return mintData.freezeAuthorityOption !== 0;
+  } catch (e) {
+    logger.debug(e);
+    logger.error({ mint }, `Failed to check if mint is freezable`);
+    return false;
+  }
+}
 function loadSnipeList() {
   if (!USE_SNIPE_LIST) {
     return;
